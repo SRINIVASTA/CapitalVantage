@@ -1,35 +1,32 @@
 import streamlit as st
 import pandas as pd
-import google.generativeai as genai
+from google import genai
 from PyPDF2 import PdfReader
 import plotly.express as px
-import os
 
 # 1. Setup & Configuration
 st.set_page_config(page_title="GenAI Financial Agent", page_icon="🚀", layout="wide")
 
-st.markdown("""
-    # 🚀 GenAI Financial Agent
-    Analyze PDFs and CSVs with Agentic Logic
-""")
+st.markdown("# 🚀 GenAI Financial Agent")
 
-# Sidebar for API Key and Model Selection
+# Sidebar for API Key
 with st.sidebar:
     st.header("🔑 Authentication")
-    api_key = st.text_input("Enter Google Gemini API Key", type="password", help="Get yours at ://google.com")
+    api_key = st.text_input("Enter Gemini API Key", type="password")
     
     st.divider()
     st.header("🤖 Model Settings")
-    # Using 1.5-flash as default to avoid 'NotFound' errors associated with 'gemini-pro'
-    model_choice = st.selectbox("Select Model", ["gemini-1.5-flash", "gemini-1.5-pro"])
+    # Using the newest stable model identifier
+    model_id = st.selectbox("Select Model", ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"])
 
-# 2. Initialize Gemini
+# 2. Initialize Client
+client = None
 if api_key:
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_choice)
+        # Using the new Google GenAI SDK Client
+        client = genai.Client(api_key=api_key)
     except Exception as e:
-        st.error(f"Error configuring Gemini: {e}")
+        st.error(f"Initialization Error: {e}")
 
 # 3. File Uploaders
 col1, col2 = st.columns(2)
@@ -38,73 +35,55 @@ with col1:
 with col2:
     csv_file = st.file_uploader("📊 Upload Financial Data (CSV)", type="csv")
 
-# 4. Logic & Utility Functions
+# 4. Helper Functions
 def get_pdf_text(pdf_file):
     text = ""
     pdf_reader = PdfReader(pdf_file)
     for page in pdf_reader.pages:
         content = page.extract_text()
-        if content:
-            text += content
+        if content: text += content
     return text
 
 def agent_query(prompt, context=""):
-    full_prompt = f"""
-    You are a Financial AI Agent. Use the following context to answer the user request.
-    If the context isn't enough, use your general financial knowledge but state it clearly.
-    
-    Context: {context}
-    
-    User Request: {prompt}
-    """
-    response = model.generate_content(full_prompt)
+    full_content = f"Context: {context}\n\nUser Request: {prompt}"
+    # New SDK syntax: client.models.generate_content
+    response = client.models.generate_content(
+        model=model_id,
+        contents=full_content
+    )
     return response.text
 
-# 5. Main Application Interface
+# 5. Application Logic
 if not api_key:
-    st.info("👈 Please enter your Gemini API key in the sidebar to start.")
+    st.warning("Please enter your API key in the sidebar to begin.")
 else:
     tab1, tab2 = st.tabs(["📄 Document Summarizer", "📈 Data Analyst Agent"])
 
-    # --- Tab 1: PDF Summarization ---
     with tab1:
         if pdf_file:
-            st.success("PDF Uploaded Successfully!")
-            if st.button("Generate AI Executive Summary"):
-                with st.spinner("Agent is reading the document..."):
+            if st.button("Generate Summary"):
+                with st.spinner("Analyzing document..."):
                     raw_text = get_pdf_text(pdf_file)
-                    # Pass the first 15,000 characters to stay within basic prompt limits
-                    summary = agent_query("Provide a concise executive summary focusing on revenue, net income, and risk factors.", context=raw_text[:15000])
-                    st.subheader("Executive Summary")
+                    # Simple RAG: passing text slice as context
+                    summary = agent_query("Summarize financial performance and risks.", context=raw_text[:15000])
                     st.markdown(summary)
         else:
-            st.info("Upload a financial PDF (like an Annual Report) to see the agent in action.")
+            st.info("Upload a PDF to start.")
 
-    # --- Tab 2: CSV Data Analysis ---
     with tab2:
         if csv_file:
             df = pd.read_csv(csv_file)
-            st.dataframe(df.head(10), use_container_width=True)
+            st.dataframe(df.head(), use_container_width=True)
             
-            user_query = st.text_input("Ask the Data Agent (e.g., 'What is the correlation between revenue and spend?' or 'Plot the quarterly growth')")
-            
+            user_query = st.text_input("Ask the Data Agent:")
             if user_query:
-                # Intent Routing Logic
-                if any(word in user_query.lower() for word in ["plot", "chart", "graph", "visualize"]):
-                    st.info("Agent Intent: Data Visualization")
-                    numeric_df = df.select_dtypes(include=['number'])
-                    if not numeric_df.empty:
-                        fig = px.line(df, title="Automated Financial Trend Analysis")
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.warning("No numeric columns found to visualize.")
+                if any(x in user_query.lower() for x in ["plot", "chart", "visualize"]):
+                    num_cols = df.select_dtypes(include=['number']).columns.tolist()
+                    if num_cols:
+                        fig = px.line(df, title="Data Trend")
+                        st.plotly_chart(fig)
                 else:
-                    with st.spinner("Agent is crunching numbers..."):
-                        # Send statistical summary as context
-                        data_summary = df.describe().to_string()
-                        answer = agent_query(user_query, context=f"Dataset Statistics:\n{data_summary}")
-                        st.markdown("### Agent Response")
+                    with st.spinner("Thinking..."):
+                        stats = df.describe().to_string()
+                        answer = agent_query(user_query, context=f"Data Stats: {stats}")
                         st.write(answer)
-        else:
-            st.info("Upload a CSV file (e.g., sales_data.csv) to enable the Data Analyst.")
-
