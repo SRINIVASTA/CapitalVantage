@@ -138,3 +138,27 @@ if prompt := st.chat_input("Ask about the data or type 'plot a chart'...") or st
 
             except Exception as e:
                 st.error(f"Execution Error: {e}")
+
+# --- 6. VALIDATION LAYER (THE "GUARDRAILS") ---
+
+def validate_context(text, df):
+    """Checks if there is enough data to actually answer a question."""
+    if not text and df is None:
+        return False, "⚠️ No data found. Please upload a PDF or CSV first."
+    if text and len(text) < 50:
+        return False, "⚠️ The PDF seems too short or unreadable (OCR might be needed)."
+    return True, "Success"
+
+# Use this inside your Chat Input block:
+if prompt := st.chat_input("Ask about the data..."):
+    # Run Validation first
+    is_valid, error_msg = validate_context(pdf_text, st.session_state.extracted_df)
+    
+    if not is_valid:
+        st.warning(error_msg)
+    elif not api_key:
+        st.error("🔑 Please enter your API Key in the sidebar.")
+    else:
+        # Proceed to LLM logic only if validation passes
+        with st.chat_message("assistant"):
+            # ... (your existing model.generate_content code)
