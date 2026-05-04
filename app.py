@@ -27,11 +27,10 @@ with st.sidebar:
 if user_api_key:
     try:
         genai.configure(api_key=user_api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # CHANGED: Using 'gemini-flash-latest' to avoid 404 errors
+        model = genai.GenerativeModel('gemini-flash-latest') 
     except Exception as e:
         st.sidebar.error("Failed to initialize API. Check your key.")
-else:
-    st.sidebar.warning("Please enter your Gemini API Key to proceed.")
 
 # --- 4. DATA PROCESSING LOGIC ---
 if "context_data" not in st.session_state:
