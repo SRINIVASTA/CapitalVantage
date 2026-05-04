@@ -1,6 +1,6 @@
 # 🚀 GenAI Financial Agent (Powered by Gemini)
 
-**Developed by:** [Srinivasta](https://github.com)  
+**Developed by:** [Srinivasta](https://github.com/srinivasta)  
 **Role:** Data Scientist
 
 A professional Generative AI application built to showcase LLM orchestration, RAG pipelines, and Document Intelligence. This agent uses Google’s Gemini Pro and Flash models to analyze complex financial datasets and unstructured documents, providing intelligent summaries and real-time data visualizations via a Streamlit interface.
@@ -18,8 +18,8 @@ A professional Generative AI application built to showcase LLM orchestration, RA
 ## 🛠️ Tech Stack
 
 - **Model:** Google Gemini (1.5 Pro / 1.5 Flash / 2.0 Flash)
-- **Frontend:** [Streamlit](https://streamlit.io)
-- **Orchestration:** [Google GenAI SDK](https://github.com)
+- **Frontend:** [Streamlit](https://5nemtiurhbntuup3etwc8f.streamlit.app/)
+- **Orchestration:** [Google GenAI SDK](https://github.com/srinivasta)
 - **Data Processing:** Pandas, PyPDF2
 - **Visualization:** Plotly Express
 
