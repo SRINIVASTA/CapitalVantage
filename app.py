@@ -15,14 +15,25 @@ if "extracted_df" not in st.session_state:
 if "suggestions" not in st.session_state:
     st.session_state.suggestions = []
 
-# --- 2. SIDEBAR: CONFIG & KNOWLEDGE BASE ---
+# --- 2. SIDEBAR: DYNAMIC MODEL SELECTOR & CONFIG ---
 with st.sidebar:
     st.title("⚙️ Agent Settings")
     api_key = st.text_input("Enter Gemini API Key", type="password")
-    model_id = st.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-pro"])
     
+    # Dynamic Model Loading
+    available_models = ["gemini-1.5-flash", "gemini-1.5-pro"]
     if api_key:
-        genai.configure(api_key=api_key)
+        try:
+            genai.configure(api_key=api_key)
+            # Fetching all active models that support content generation
+            fetched_models = [m.name.replace('models/', '') for m in genai.list_models() 
+                             if 'generateContent' in m.supported_generation_methods]
+            if fetched_models:
+                available_models = fetched_models
+        except Exception:
+            st.warning("Could not fetch models. Using defaults.")
+
+    model_id = st.selectbox("Select Active Model", available_models)
     
     st.divider()
     st.header("📁 Knowledge Base")
@@ -63,11 +74,11 @@ if st.session_state.suggestions:
     st.sidebar.subheader("💡 Suggested for You")
     for q in st.session_state.suggestions:
         if st.sidebar.button(q):
-            st.session_state.user_input = q # Hack to trigger chat
+            st.session_state.user_input = q 
 
 # --- 5. MAIN CHAT INTERFACE ---
 st.title("💬 GenAI Financial Agent")
-st.info("I am an Agentic AI designed to extract, analyze, and visualize financial data.")
+st.info(f"Currently active: **{model_id}** | Handling Document Intelligence & RAG")
 
 # Display Chat History
 for msg in st.session_state.messages:
