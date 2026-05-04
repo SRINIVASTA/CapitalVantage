@@ -1,3 +1,4 @@
+### `app.py`
 import streamlit as st
 import pandas as pd
 import google.generativeai as genai
@@ -5,85 +6,105 @@ from PyPDF2 import PdfReader
 import plotly.express as px
 
 # 1. Setup & Session State
-st.set_page_config(page_title="Financial Agent Chat", layout="wide")
-st.title("💬 Financial Agent Chat")
+st.set_page_config(page_title="Financial Agent Chat", page_icon="💰", layout="wide")
 
 if "messages" not in st.session_state:
-    st.session_state.messages = []  # Store chat history
-if "context_data" not in st.session_state:
-    st.session_state.context_data = "" # Store extracted text/stats
+    st.session_state.messages = []  # Chat history
+if "pdf_context" not in st.session_state:
+    st.session_state.pdf_context = "" # Processed PDF text
 
-# 2. Sidebar: Auth & Model Discovery
+# 2. Sidebar: Configuration
 with st.sidebar:
-    st.header("🔑 Settings")
+    st.header("🔑 API Settings")
     api_key = st.text_input("Enter Gemini API Key", type="password")
     
-    available_models = ["gemini-1.5-flash"]
+    available_models = ["gemini-1.5-flash", "gemini-1.5-pro"]
     if api_key:
         try:
             genai.configure(api_key=api_key)
-            model_list = [m.name.replace('models/', '') for m in genai.list_models() 
-                          if 'generateContent' in m.supported_generation_methods]
-            if model_list: available_models = model_list
-        except: pass
+            # Dynamic Model Discovery
+            models = [m.name.replace('models/', '') for m in genai.list_models() 
+                     if 'generateContent' in m.supported_generation_methods]
+            if models: available_models = models
+        except:
+            st.warning("Could not fetch models. Using defaults.")
 
     model_id = st.selectbox("Select Model", available_models)
     
     st.divider()
-    st.header("📁 Upload Knowledge")
-    pdf_file = st.file_uploader("Upload PDF Report", type="pdf")
-    csv_file = st.file_uploader("Upload CSV Data", type="csv")
+    st.header("📁 Knowledge Base")
+    pdf_file = st.file_uploader("Upload Financial PDF", type="pdf")
+    csv_file = st.file_uploader("Upload Financial CSV", type="csv")
 
-    if st.button("Clear Chat"):
+    if st.button("Clear Chat History"):
         st.session_state.messages = []
         st.rerun()
 
-# 3. Process Uploads into Context
+# 3. Knowledge Extraction Logic
 if pdf_file:
-    reader = PdfReader(pdf_file)
-    text = "".join([page.extract_text() or "" for page in reader.pages])
-    st.session_state.context_data = f"PDF Content: {text[:15000]}"
-    st.sidebar.success("PDF Context Loaded!")
+    with st.spinner("Extracting PDF text..."):
+        reader = PdfReader(pdf_file)
+        text = "".join([page.extract_text() or "" for page in reader.pages])
+        st.session_state.pdf_context = text[:15000] # Limit to 15k chars for prompt safety
+        st.sidebar.success("PDF Content Indexed")
 
-if csv_file:
-    df = pd.read_csv(csv_file)
-    st.session_state.context_data += f"\nCSV Stats: {df.describe().to_string()}"
-    st.sidebar.success("CSV Stats Loaded!")
-    with st.sidebar.expander("View Data"):
-        st.dataframe(df.head())
+# 4. Chat UI
+st.title("💬 GenAI Financial Agent")
+st.caption("Ask questions about your documents or request visualizations (e.g., 'Show me a pie chart')")
 
-# 4. Chat Interface
-# Display existing messages
+# Display conversation
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# User input
-if prompt := st.chat_input("Ask me about your financial data..."):
-    # Add user message to UI
+# User Input
+if prompt := st.chat_input("How can I help with your finances today?"):
+    # Store user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Generate Response
+    # Agent Processing
     with st.chat_message("assistant"):
         if not api_key:
-            response_text = "Please provide an API key in the sidebar to chat."
+            st.error("Please provide a Gemini API key in the sidebar.")
         else:
             try:
                 model = genai.GenerativeModel(model_id)
-                # Combine history + context + prompt
-                full_prompt = f"System Context: {st.session_state.context_data}\n\nUser: {prompt}"
                 
-                # Check for visualization intent
-                if any(x in prompt.lower() for x in ["plot", "chart", "visualize"]) and csv_file:
-                    st.plotly_chart(px.line(df, title="Financial Visual Analysis"))
-                    response_text = "I've generated the chart based on your request above."
+                # Check for Chart Intent (Logic Routing)
+                if any(x in prompt.lower() for x in ["pie", "chart", "graph", "plot", "visualize"]):
+                    if csv_file:
+                        df = pd.read_csv(csv_file)
+                        num_cols = df.select_dtypes(include=['number']).columns.tolist()
+                        cat_cols = df.select_dtypes(include=['object']).columns.tolist()
+                        
+                        if "pie" in prompt.lower() and cat_cols and num_cols:
+                            fig = px.pie(df, names=cat_cols[0], values=num_cols[0], title="Financial Distribution")
+                            st.plotly_chart(fig)
+                            response_text = "I've generated the Pie Chart based on your CSV data."
+                        elif num_cols:
+                            fig = px.line(df, y=num_cols[0], title="Financial Trend Analysis")
+                            st.plotly_chart(fig)
+                            response_text = "Here is the trend visualization for your data."
+                        else:
+                            response_text = "I found your CSV, but there aren't enough numeric/categorical columns to plot."
+                    else:
+                        response_text = "I can't generate a chart without a CSV file. Please upload one in the sidebar."
+                
+                # Standard Text Response (RAG)
                 else:
+                    context = f"PDF Context: {st.session_state.pdf_context}\n"
+                    if csv_file:
+                        df_preview = pd.read_csv(csv_file).describe().to_string()
+                        context += f"CSV Statistics: {df_preview}"
+                    
+                    full_prompt = f"System: Use context below to answer accurately.\n{context}\n\nUser: {prompt}"
                     response = model.generate_content(full_prompt)
                     response_text = response.text
+
+                st.markdown(response_text)
+                st.session_state.messages.append({"role": "assistant", "content": response_text})
+
             except Exception as e:
-                response_text = f"Error: {str(e)}"
-        
-        st.markdown(response_text)
-        st.session_state.messages.append({"role": "assistant", "content": response_text})
+                st.error(f"Error: {str(e)}")
