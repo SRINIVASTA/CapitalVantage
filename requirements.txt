@@ -1,6 +1,5 @@
 streamlit
-pandas 
-openai-whisper 
-PyPDF2 
-google-generativeai 
-librosa
+google-generativeai
+PyPDF2
+pandas
+plotly
