@@ -6,7 +6,7 @@ import plotly.express as px
 import io
 
 # --- 1. CONFIGURATION & SESSION STATE ---
-st.set_page_config(page_title="EY GenAI Financial Agent", page_icon="💰", layout="wide")
+st.set_page_config(page_title="GenAI Financial Agent", page_icon="💰", layout="wide")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
