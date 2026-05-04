@@ -15,23 +15,22 @@ if "extracted_df" not in st.session_state:
 if "suggestions" not in st.session_state:
     st.session_state.suggestions = []
 
-# --- 2. SIDEBAR: DYNAMIC MODEL SELECTOR & CONFIG ---
+# --- 2. SIDEBAR: DYNAMIC CONFIG & MODELS ---
 with st.sidebar:
     st.title("⚙️ Agent Settings")
     api_key = st.text_input("Enter Gemini API Key", type="password")
     
-    # Dynamic Model Loading
+    # Model Selector Logic
     available_models = ["gemini-1.5-flash", "gemini-1.5-pro"]
     if api_key:
         try:
             genai.configure(api_key=api_key)
-            # Fetching all active models that support content generation
             fetched_models = [m.name.replace('models/', '') for m in genai.list_models() 
                              if 'generateContent' in m.supported_generation_methods]
             if fetched_models:
                 available_models = fetched_models
         except Exception:
-            st.warning("Could not fetch models. Using defaults.")
+            st.warning("Defaulting to standard models.")
 
     model_id = st.selectbox("Select Active Model", available_models)
     
@@ -46,7 +45,7 @@ with st.sidebar:
         st.session_state.suggestions = []
         st.rerun()
 
-# --- 3. CORE LOGIC: DOCUMENT INTELLIGENCE ---
+# --- 3. DATA PROCESSING ---
 pdf_text = ""
 if pdf_file:
     reader = PdfReader(pdf_file)
@@ -57,108 +56,78 @@ if csv_file:
     st.session_state.extracted_df = pd.read_csv(csv_file)
     st.sidebar.success("CSV Loaded")
 
-# --- 4. AGENTIC FEATURE: PROACTIVE SUGGESTIONS ---
+# --- 4. AGENTIC SUGGESTIONS (PROACTIVE ANALYSIS) ---
 if (pdf_text or st.session_state.extracted_df is not None) and api_key and not st.session_state.suggestions:
-    with st.spinner("Agent analyzing data for insights..."):
+    with st.spinner("Analyzing context..."):
         model = genai.GenerativeModel(model_id)
-        context = pdf_text[:5000] if pdf_text else str(st.session_state.extracted_df.head())
-        prompt = f"Based on this financial data, suggest 3 short analytical questions for a CFO. Return ONLY the questions.\n\nData: {context}"
+        context_preview = pdf_text[:4000] if pdf_text else str(st.session_state.extracted_df.head())
+        s_prompt = f"Suggest 3 high-level financial questions based on this data. Return only questions:\n{context_preview}"
         try:
-            res = model.generate_content(prompt)
+            res = model.generate_content(s_prompt)
             st.session_state.suggestions = [q.strip() for q in res.text.split('\n') if q.strip()][:3]
         except:
-            st.session_state.suggestions = ["Summarize key trends", "Analyze risks", "Show revenue chart"]
+            st.session_state.suggestions = ["Summarize Trends", "Risk Analysis", "Project ROI"]
 
-# Display clickable suggestions in sidebar
 if st.session_state.suggestions:
-    st.sidebar.subheader("💡 Suggested for You")
+    st.sidebar.subheader("💡 Suggestions")
     for q in st.session_state.suggestions:
         if st.sidebar.button(q):
-            st.session_state.user_input = q 
+            st.session_state.active_prompt = q
 
-# --- 5. MAIN CHAT INTERFACE ---
+# --- 5. MAIN INTERFACE & CHAT LOGIC ---
 st.title("💬 GenAI Financial Agent")
-st.info(f"Currently active: **{model_id}** | Handling Document Intelligence & RAG")
+st.info(f"Active Model: **{model_id}**")
 
-# Display Chat History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# User Input
-if prompt := st.chat_input("Ask about the data or type 'plot a chart'...") or st.session_state.get("user_input"):
-    if st.session_state.get("user_input"):
-        prompt = st.session_state.user_input
-        del st.session_state.user_input
+# User Input Logic (Handles keyboard input OR suggestion buttons)
+user_query = st.chat_input("Ask a question...")
+if st.session_state.get("active_prompt"):
+    user_query = st.session_state.active_prompt
+    del st.session_state.active_prompt
 
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+if user_query:
+    # --- VALIDATION LAYER ---
+    if not api_key:
+        st.error("🔑 Please enter an API key to proceed.")
+    elif not pdf_text and st.session_state.extracted_df is None:
+        st.warning("⚠️ Please upload a PDF or CSV file first.")
+    else:
+        st.session_state.messages.append({"role": "user", "content": user_query})
+        with st.chat_message("user"):
+            st.markdown(user_query)
 
-    with st.chat_message("assistant"):
-        if not api_key:
-            st.error("API Key required.")
-        else:
+        with st.chat_message("assistant"):
             try:
                 model = genai.GenerativeModel(model_id)
                 
-                # BRANCH A: VISUALIZATION & TABLE EXTRACTION
-                if any(x in prompt.lower() for x in ["chart", "plot", "graph", "pie", "visualize"]):
+                # Check for Visualization Intent
+                if any(k in user_query.lower() for k in ["chart", "plot", "graph", "visualize"]):
                     if st.session_state.extracted_df is None and pdf_text:
-                        with st.spinner("Extracting table from PDF..."):
-                            extract_cmd = f"Extract the main financial table from this text as CSV. ONLY CSV code:\n{pdf_text[:10000]}"
-                            raw_csv = model.generate_content(extract_cmd).text
-                            clean_csv = raw_csv.replace("```csv", "").replace("```", "").strip()
-                            st.session_state.extracted_df = pd.read_csv(io.StringIO(clean_csv))
+                        with st.spinner("Converting PDF table to Data..."):
+                            e_prompt = f"Extract the table from this text as CSV only:\n{pdf_text[:8000]}"
+                            csv_data = model.generate_content(e_prompt).text.replace("```csv", "").replace("```", "").strip()
+                            st.session_state.extracted_df = pd.read_csv(io.StringIO(csv_data))
                     
-                    df = st.session_state.extracted_df
-                    if df is not None:
+                    if st.session_state.extracted_df is not None:
+                        df = st.session_state.extracted_df
                         num_cols = df.select_dtypes(include=['number']).columns.tolist()
                         cat_cols = df.select_dtypes(include=['object']).columns.tolist()
-                        
-                        if "pie" in prompt.lower() and cat_cols and num_cols:
-                            fig = px.pie(df, names=cat_cols[0], values=num_cols[0])
-                        else:
-                            fig = px.bar(df, x=cat_cols[0] if cat_cols else None, y=num_cols[0] if num_cols else None)
-                        
+                        fig = px.bar(df, x=cat_cols[0] if cat_cols else None, y=num_cols[0] if num_cols else None)
                         st.plotly_chart(fig)
-                        st.dataframe(df.head())
-                        res_text = "I've processed the data and generated the visualization."
+                        ans = "Data extracted and visualized successfully."
                     else:
-                        res_text = "I need a CSV or a PDF with tables to create a chart."
-
-                # BRANCH B: STANDARD RAG CHAT
+                        ans = "I couldn't find a table to visualize."
+                
+                # Default RAG Chat
                 else:
-                    full_context = f"Context: {pdf_text[:12000]}\n\nQuestion: {prompt}"
-                    response = model.generate_content(full_context)
-                    res_text = response.text
+                    full_prompt = f"Context:\n{pdf_text[:12000]}\n\nUser Question: {user_query}"
+                    ans = model.generate_content(full_prompt).text
 
-                st.markdown(res_text)
-                st.session_state.messages.append({"role": "assistant", "content": res_text})
+                st.markdown(ans)
+                st.session_state.messages.append({"role": "assistant", "content": ans})
 
             except Exception as e:
-                st.error(f"Execution Error: {e}")
-
-# --- 6. VALIDATION LAYER (THE "GUARDRAILS") ---
-
-def validate_context(text, df):
-    """Checks if there is enough data to actually answer a question."""
-    if not text and df is None:
-        return False, "⚠️ No data found. Please upload a PDF or CSV first."
-    if text and len(text) < 50:
-        return False, "⚠️ The PDF seems too short or unreadable (OCR might be needed)."
-    return True, "Success"
-
-# Use this inside your Chat Input block:
-if prompt := st.chat_input("Ask about the data..."):
-    # Run Validation first
-    is_valid, error_msg = validate_context(pdf_text, st.session_state.extracted_df)
-    
-    if not is_valid:
-        st.warning(error_msg)
-    elif not api_key:
-        st.error("🔑 Please enter your API Key in the sidebar.")
-    else:
-        # Proceed to LLM logic only if validation passes
-        with st.chat_message("assistant"):
-            # ... (your existing model.generate_content code)
+                st.error(f"Error processing request: {e}")
