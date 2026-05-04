@@ -1,0 +1,6 @@
+streamlit
+pandas 
+openai-whisper 
+PyPDF2 
+google-generativeai 
+librosa
