@@ -9,31 +9,40 @@ import os
 st.set_page_config(page_title="FinSight Omni", layout="wide")
 st.title("🚀 FinSight Omni: Multimodal Financial Agent")
 
-# Replace with your actual API Key
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
-genai.configure(api_key=GEMINI_API_KEY)
-
-# Use 1.5-Flash for speed and large context handling
-model = genai.GenerativeModel('gemini-1.5-flash')
-
-if "context_data" not in st.session_state:
-    st.session_state.context_data = ""
-
-# --- 2. SIDEBAR UPLOAD ---
+# --- 2. SIDEBAR FOR API KEY & FILE UPLOAD ---
 with st.sidebar:
+    st.header("Settings")
+    # Using st.text_input to get the API Key securely from the user
+    user_api_key = st.text_input("Enter Gemini API Key", type="password")
+    
+    st.divider()
     st.header("Data Input")
     uploaded_file = st.file_uploader("Upload Audio, PDF, or CSV", type=["pdf", "csv", "mp3", "wav"])
-    if st.button("Clear Context"):
+    
+    if st.button("Clear Conversation"):
         st.session_state.context_data = ""
         st.rerun()
 
-# --- 3. ALL-IN-ONE PROCESSING LOGIC ---
-if uploaded_file:
+# --- 3. CONFIGURING THE MODEL ---
+if user_api_key:
+    try:
+        genai.configure(api_key=user_api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+    except Exception as e:
+        st.sidebar.error("Failed to initialize API. Check your key.")
+else:
+    st.sidebar.warning("Please enter your Gemini API Key to proceed.")
+
+# --- 4. DATA PROCESSING LOGIC ---
+if "context_data" not in st.session_state:
+    st.session_state.context_data = ""
+
+if uploaded_file and user_api_key:
     file_type = uploaded_file.name.split('.')[-1].lower()
     
     with st.spinner(f"Analyzing {uploaded_file.name}..."):
-        # AUDIO PROCESSING
         if file_type in ["mp3", "wav"]:
+            # Use 'tiny' model for faster local transcription
             w_model = whisper.load_model("tiny")
             with open("temp_audio", "wb") as f:
                 f.write(uploaded_file.getbuffer())
@@ -42,55 +51,44 @@ if uploaded_file:
             st.audio(uploaded_file)
             os.remove("temp_audio")
 
-        # PDF PROCESSING
         elif file_type == "pdf":
             reader = PyPDF2.PdfReader(uploaded_file)
-            text = ""
-            for page in reader.pages:
-                content = page.extract_text()
-                if content: text += content
+            text = "".join([page.extract_text() or "" for page in reader.pages])
             st.session_state.context_data = text
 
-        # CSV PROCESSING
         elif file_type == "csv":
             df = pd.read_csv(uploaded_file)
             st.dataframe(df.head(10))
-            # Summarize CSV to avoid "InvalidArgument" size errors
-            summary = f"Columns: {list(df.columns)}\nStats: {df.describe().to_string()}\nData Snippet: {df.head(20).to_string()}"
+            # Summarize to avoid token limit issues
+            summary = f"Columns: {list(df.columns)}\nStats: {df.describe().to_string()}\nSample: {df.head(10).to_string()}"
             st.session_state.context_data = summary
 
-    st.success(f"{file_type.upper()} Loaded!")
+    st.success(f"{file_type.upper()} Loaded successfully!")
 
-# --- 4. THE AGENT INTERFACE ---
+# --- 5. CHAT INTERFACE ---
 st.divider()
-query = st.chat_input("Ask me about the financial data...")
+query = st.chat_input("Ask a question about your uploaded financial data...")
 
 if query:
-    if not st.session_state.context_data:
-        st.info("Please upload a file to begin.")
+    if not user_api_key:
+        st.error("Missing API Key in sidebar!")
+    elif not st.session_state.context_data:
+        st.info("Please upload a file first.")
     else:
         with st.chat_message("user"):
             st.write(query)
 
         with st.chat_message("assistant"):
-            # Truncate context to ~15,000 chars to avoid API "InvalidArgument" errors
+            # Truncate context to stay within safe limits
             safe_context = st.session_state.context_data[:15000]
             
-            prompt = f"""
-            You are a Financial Expert Agent. Use the context below to answer.
-            If the data is a CSV, focus on trends and numbers.
-            If it is Audio or PDF, focus on summaries and key takeaways.
-            
-            CONTEXT:
-            {safe_context}
-            
-            USER QUESTION:
-            {query}
-            """
+            prompt = f"CONTEXT:\n{safe_context}\n\nQUESTION: {query}"
             
             try:
                 response = model.generate_content(prompt)
                 st.markdown(response.text)
             except Exception as e:
-                st.error(f"API Error: {e}. Try a smaller file or clear context.")
-
+                # Catching and displaying the "Invalid Key" or "Quota Exceeded" errors clearly
+                st.error(f"❌ API Error: {str(e)}")
+                if "API_KEY_INVALID" in str(e):
+                    st.info("💡 Double-check the API Key you entered in the sidebar.")
