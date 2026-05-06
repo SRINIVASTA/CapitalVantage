@@ -3,3 +3,5 @@ pandas
 google-generativeai
 PyPDF2
 plotly
+openpyxl
+Pillow
