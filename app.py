@@ -4,9 +4,10 @@ import google.generativeai as genai
 from PyPDF2 import PdfReader
 import plotly.express as px
 import io
+from PIL import Image
 
 # --- 1. CONFIGURATION & SESSION STATE ---
-st.set_page_config(page_title="GenAI Financial Agent", page_icon="💰", layout="wide")
+st.set_page_config(page_title="GenAI Multi-Asset Agent", page_icon="💰", layout="wide")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -15,29 +16,29 @@ if "extracted_df" not in st.session_state:
 if "suggestions" not in st.session_state:
     st.session_state.suggestions = []
 
-# --- 2. SIDEBAR: DYNAMIC CONFIG & MODELS ---
+# --- 2. SIDEBAR: SETTINGS & UPLOADS ---
 with st.sidebar:
     st.title("⚙️ Agent Settings")
     api_key = st.text_input("Enter Gemini API Key", type="password")
     
-    # Model Selector Logic
     available_models = ["gemini-1.5-flash", "gemini-1.5-pro"]
     if api_key:
         try:
             genai.configure(api_key=api_key)
             fetched_models = [m.name.replace('models/', '') for m in genai.list_models() 
                              if 'generateContent' in m.supported_generation_methods]
-            if fetched_models:
-                available_models = fetched_models
-        except Exception:
-            st.warning("Defaulting to standard models.")
+            if fetched_models: available_models = fetched_models
+        except:
+            st.warning("Using default model list.")
 
     model_id = st.selectbox("Select Active Model", available_models)
     
     st.divider()
     st.header("📁 Knowledge Base")
-    pdf_file = st.file_uploader("Upload Financial PDF", type="pdf")
-    csv_file = st.file_uploader("Upload Financial CSV", type="csv")
+    uploaded_file = st.file_uploader(
+        "Upload Financial Data (PDF, CSV, XLSX, TXT, Image)", 
+        type=["pdf", "csv", "xlsx", "xls", "txt", "png", "jpg", "jpeg"]
+    )
 
     if st.button("Clear Chat & Memory"):
         st.session_state.messages = []
@@ -45,28 +46,50 @@ with st.sidebar:
         st.session_state.suggestions = []
         st.rerun()
 
-# --- 3. DATA PROCESSING ---
-pdf_text = ""
-if pdf_file:
-    reader = PdfReader(pdf_file)
-    pdf_text = "".join([page.extract_text() or "" for page in reader.pages])
-    st.sidebar.success("PDF Indexed")
+# --- 3. UNIVERSAL DATA PROCESSING ---
+context_text = ""
+context_image = None
 
-if csv_file:
-    st.session_state.extracted_df = pd.read_csv(csv_file)
-    st.sidebar.success("CSV Loaded")
+if uploaded_file:
+    file_ext = uploaded_file.name.split('.')[-1].lower()
+    
+    try:
+        if file_ext == "pdf":
+            reader = PdfReader(uploaded_file)
+            context_text = "".join([page.extract_text() or "" for page in reader.pages])
+            st.sidebar.success("PDF Indexed")
+            
+        elif file_ext in ["csv"]:
+            st.session_state.extracted_df = pd.read_csv(uploaded_file)
+            st.sidebar.success("CSV Loaded")
+            
+        elif file_ext in ["xlsx", "xls"]:
+            st.session_state.extracted_df = pd.read_excel(uploaded_file)
+            st.sidebar.success("Excel Loaded")
+            
+        elif file_ext == "txt":
+            context_text = uploaded_file.read().decode("utf-8")
+            st.sidebar.success("Text File Indexed")
+            
+        elif file_ext in ["png", "jpg", "jpeg"]:
+            context_image = Image.open(uploaded_file)
+            st.sidebar.image(context_image, caption="Uploaded Image", use_column_width=True)
+            st.sidebar.success("Image Loaded")
+    except Exception as e:
+        st.sidebar.error(f"Error loading file: {e}")
 
-# --- 4. AGENTIC SUGGESTIONS (PROACTIVE ANALYSIS) ---
-if (pdf_text or st.session_state.extracted_df is not None) and api_key and not st.session_state.suggestions:
+# --- 4. PROACTIVE SUGGESTIONS ---
+if (context_text or st.session_state.extracted_df is not None or context_image) and api_key and not st.session_state.suggestions:
     with st.spinner("Analyzing context..."):
         model = genai.GenerativeModel(model_id)
-        context_preview = pdf_text[:4000] if pdf_text else str(st.session_state.extracted_df.head())
-        s_prompt = f"Suggest 3 high-level financial questions based on this data. Return only questions:\n{context_preview}"
+        # Create a tiny preview for the suggestion engine
+        preview = context_text[:1000] if context_text else "Tabular Data" if st.session_state.extracted_df is not None else "Image Content"
+        s_prompt = f"Suggest 3 short financial questions based on this: {preview}. Return ONLY the questions."
         try:
             res = model.generate_content(s_prompt)
             st.session_state.suggestions = [q.strip() for q in res.text.split('\n') if q.strip()][:3]
         except:
-            st.session_state.suggestions = ["Summarize Trends", "Risk Analysis", "Project ROI"]
+            st.session_state.suggestions = ["Summarize this data", "Perform Risk Analysis", "Key takeaways"]
 
 if st.session_state.suggestions:
     st.sidebar.subheader("💡 Suggestions")
@@ -74,26 +97,24 @@ if st.session_state.suggestions:
         if st.sidebar.button(q):
             st.session_state.active_prompt = q
 
-# --- 5. MAIN INTERFACE & CHAT LOGIC ---
+# --- 5. MAIN INTERFACE & CHAT ---
 st.title("💬 GenAI Financial Agent")
-st.info(f"Active Model: **{model_id}**")
+st.info(f"Mode: **Multimodal Analysis** | Model: **{model_id}**")
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# User Input Logic (Handles keyboard input OR suggestion buttons)
-user_query = st.chat_input("Ask a question...")
+user_query = st.chat_input("Ask about your financial files...")
 if st.session_state.get("active_prompt"):
     user_query = st.session_state.active_prompt
     del st.session_state.active_prompt
 
 if user_query:
-    # --- VALIDATION LAYER ---
     if not api_key:
-        st.error("🔑 Please enter an API key to proceed.")
-    elif not pdf_text and st.session_state.extracted_df is None:
-        st.warning("⚠️ Please upload a PDF or CSV file first.")
+        st.error("🔑 API Key required.")
+    elif not uploaded_file:
+        st.warning("⚠️ Please upload a file first.")
     else:
         st.session_state.messages.append({"role": "user", "content": user_query})
         with st.chat_message("user"):
@@ -103,31 +124,31 @@ if user_query:
             try:
                 model = genai.GenerativeModel(model_id)
                 
-                # Check for Visualization Intent
-                if any(k in user_query.lower() for k in ["chart", "plot", "graph", "visualize"]):
-                    if st.session_state.extracted_df is None and pdf_text:
-                        with st.spinner("Converting PDF table to Data..."):
-                            e_prompt = f"Extract the table from this text as CSV only:\n{pdf_text[:8000]}"
-                            csv_data = model.generate_content(e_prompt).text.replace("```csv", "").replace("```", "").strip()
-                            st.session_state.extracted_df = pd.read_csv(io.StringIO(csv_data))
-                    
+                # Logic for Visualizations
+                if any(k in user_query.lower() for k in ["chart", "plot", "graph"]):
                     if st.session_state.extracted_df is not None:
                         df = st.session_state.extracted_df
                         num_cols = df.select_dtypes(include=['number']).columns.tolist()
                         cat_cols = df.select_dtypes(include=['object']).columns.tolist()
-                        fig = px.bar(df, x=cat_cols[0] if cat_cols else None, y=num_cols[0] if num_cols else None)
-                        st.plotly_chart(fig)
-                        ans = "Data extracted and visualized successfully."
+                        fig = px.line(df, x=cat_cols[0] if cat_cols else None, y=num_cols[0] if num_cols else None)
+                        st.plotly_chart(fig, use_container_width=True)
+                        ans = "Here is the visualization based on the tabular data."
                     else:
-                        ans = "I couldn't find a table to visualize."
+                        ans = "I need a CSV or Excel file to create a chart."
                 
-                # Default RAG Chat
+                # Multimodal Chat Logic
                 else:
-                    full_prompt = f"Context:\n{pdf_text[:12000]}\n\nUser Question: {user_query}"
-                    ans = model.generate_content(full_prompt).text
+                    content_payload = []
+                    if context_text: content_payload.append(f"Document Text: {context_text[:15000]}")
+                    if st.session_state.extracted_df is not None: content_payload.append(f"Data Sample: {st.session_state.extracted_df.head(10).to_string()}")
+                    if context_image: content_payload.append(context_image)
+                    content_payload.append(f"User Question: {user_query}")
+                    
+                    response = model.generate_content(content_payload)
+                    ans = response.text
 
                 st.markdown(ans)
                 st.session_state.messages.append({"role": "assistant", "content": ans})
 
             except Exception as e:
-                st.error(f"Error processing request: {e}")
+                st.error(f"Error: {e}")
